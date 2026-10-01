@@ -1,0 +1,67 @@
+services:
+  database:
+    image: postgis/postgis:18-3.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Copy .env.example to .env first}
+      POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local database password in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql
+      - ./backend/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-20}
+      CORS_ORIGINS: http://localhost:${WEB_PORT:-5173}
+      ADMIN_EMAIL: ${APP_ADMIN_EMAIL:?Set APP_ADMIN_EMAIL in .env}
+      ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:?Set APP_ADMIN_PASSWORD in .env}
+      SESSION_SECRET: ${APP_SESSION_SECRET:?Set APP_SESSION_SECRET in .env}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - uploads:/app/uploads
+    depends_on:
+      database:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  web:
+    image: node:24-alpine
+    working_dir: /app
+    environment:
+      VITE_API_BASE_URL: http://localhost:${API_PORT:-8000}
+      VITE_CONTACT_EMAIL: ${VITE_CONTACT_EMAIL:-contact@example.org}
+      VITE_PROJECT_ORGANIZATION: ${VITE_PROJECT_ORGANIZATION:-}
+      VITE_PROJECT_ADDRESS: ${VITE_PROJECT_ADDRESS:-}
+      VITE_PROJECT_PHONE: ${VITE_PROJECT_PHONE:-}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: sh -c "corepack enable && pnpm install && pnpm dev --host 0.0.0.0"
+    depends_on:
+      - api
+
+volumes:
+  postgis_data:
+  uploads:
+  frontend_node_modules:
